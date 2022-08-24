@@ -1,0 +1,4 @@
+torch==1.12.1
+torchvision==0.13.1
+pytorch_lightning==1.7.2
+scikit-image==0.19.3
