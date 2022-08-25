@@ -129,6 +129,11 @@ def collate_fn(batch):
     return batch_dict
 
 
+def list_images(input_dir):
+    return sorted([os.path.join(input_dir, name)
+                   for name in os.listdir(input_dir)])
+
+
 class GOSDataset(Dataset):
     def __init__(self, data_dir, transform):
         super().__init__()
@@ -136,10 +141,8 @@ class GOSDataset(Dataset):
 
         image_dir = os.path.join(data_dir, 'images')
         gt_dir = os.path.join(data_dir, 'masks')
-        self.image_paths = sorted([os.path.join(image_dir, name)
-                                  for name in os.listdir(image_dir)])
-        self.gt_paths = sorted([os.path.join(gt_dir, name)
-                                for name in os.listdir(gt_dir)])
+        self.image_paths = list_images(image_dir)[:300]
+        self.gt_paths = list_images(gt_dir)[:300]
 
     def __len__(self):
         return len(self.image_paths)

@@ -1,7 +1,15 @@
+import os
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pt
+from skimage import io
+import numpy as np
+
+from utils.data import list_images
+from utils.metrics import f1_mae_torch
 
 
 bce_loss = nn.BCELoss(size_average=True)
@@ -638,18 +646,81 @@ class ISNetPt(nn.Module):
 
 
 class ISNet(pt.LightningModule):
-    def __init__(self):
+    def __init__(self, in_ch, out_ch, args):
         super().__init__()
         self.net = ISNetPt(in_ch=3, out_ch=1)
+        self.args = args
+        self.gt_paths = list_images(Path(args.data_dir) / 'val/images')
 
     def training_step(self, batch, batch_idx):
-        import pdb
-        pdb.set_trace()
         images, labels = batch['image'], batch['label']
 
         ds, _ = self.net(images)
         loss2, loss = self.net.compute_loss(ds, labels)
+        self.log('loss', loss)
+        self.log('loss2', loss2)
         return loss
+
+    def validation_step(self, batch, batch_idx):
+        imidxs, images, labels, shapes = batch['imidx'], batch['image'], batch['label'], batch['shape']
+
+        ds, _ = self.net(images)
+        loss2, loss = self.net.compute_loss(ds, labels)
+        self.log('val_loss', loss)
+        self.log('val_loss2', loss2)
+
+        num_vals = images.shape[0]
+        for t in range(num_vals):
+            i_test = imidxs[t].item()
+
+            pred_val = ds[0][t, :, :, :]  # B x 1 x H x W
+
+            # recover the prediction spatial size to the orignal image size
+            pred_val = torch.squeeze(F.upsample(torch.unsqueeze(
+                pred_val, 0), (shapes[t][0], shapes[t][1]), mode='bilinear'))
+
+            # pred_val = normPRED(pred_val)
+            ma = torch.max(pred_val)
+            mi = torch.min(pred_val)
+            pred_val = (pred_val-mi)/(ma-mi)  # max = 1
+
+            if batch_idx < 4 and t == 0:
+                outdir = Path(self.args.outdir)
+                if not outdir.exists():
+                    outdir.mkdir(parents=True, exist_ok=True)
+                gt_filename = Path(self.gt_paths[i_test]).name
+                gt_outpath = outdir / gt_filename
+                gt_out = (pred_val * 255).cpu().data.numpy().astype(np.uint8)
+                io.imsave(gt_outpath, gt_out)
+
+            gt = np.squeeze(io.imread(self.gt_paths[i_test]))  # max = 255
+            with torch.no_grad():
+                gt = torch.tensor(gt).type_as(images)
+
+            pre, rec, f1, mae = f1_mae_torch(pred_val*255, gt)
+        return pre, rec, f1, mae
+
+    def validation_epoch_end(self, batch_metrics):
+        num_vals = len(batch_metrics)
+        precisions = torch.zeros(num_vals, 255)
+        recalls = torch.zeros(num_vals, 255)
+        f1_scores = torch.zeros(num_vals, 255)
+        mae_all = torch.zeros(num_vals)
+        for i, metrics in enumerate(batch_metrics):
+            precisions[i] = metrics[0]
+            recalls[i] = metrics[1]
+            f1_scores[i] = metrics[2]
+            mae_all[i] = metrics[3]
+
+        mean_precision = precisions.mean(0)
+        mean_recall = recalls.mean(0)
+        mean_f1_score = (1 + 0.3) * mean_precision * \
+            mean_recall / (0.3*mean_precision + mean_recall+1e-8)
+
+        mean_mae = mae_all.mean().item()
+        max_f1_score = mean_f1_score.max().item()
+        self.log('val_mae', mean_mae)
+        self.log('val_f1_score', max_f1_score)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
