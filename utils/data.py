@@ -141,8 +141,8 @@ class GOSDataset(Dataset):
 
         image_dir = os.path.join(data_dir, 'images')
         gt_dir = os.path.join(data_dir, 'masks')
-        self.image_paths = list_images(image_dir)[:300]
-        self.gt_paths = list_images(gt_dir)[:300]
+        self.image_paths = list_images(image_dir)
+        self.gt_paths = list_images(gt_dir)
 
     def __len__(self):
         return len(self.image_paths)
