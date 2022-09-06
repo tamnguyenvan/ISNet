@@ -187,8 +187,8 @@ class GOSDataModule(pl.LightningDataModule):
 
     def train_dataloader(self):
         dataset = GOSDataset(self.train_dir, self.train_transform)
-        return DataLoader(dataset, batch_size=self.batch_size, num_workers=self.workers)
+        return DataLoader(dataset, batch_size=self.batch_size, num_workers=self.workers, shuffle=True)
 
     def val_dataloader(self):
         dataset = GOSDataset(self.val_dir, self.val_transform)
-        return DataLoader(dataset, batch_size=self.batch_size, num_workers=self.workers)
+        return DataLoader(dataset, batch_size=1, num_workers=self.workers, shuffle=False)

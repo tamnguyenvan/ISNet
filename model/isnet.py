@@ -644,9 +644,9 @@ class ISNetPt(nn.Module):
 class ISNet(pt.LightningModule):
     def __init__(self, in_ch, out_ch, args):
         super().__init__()
-        self.net = ISNetPt(in_ch=3, out_ch=1)
+        self.net = ISNetPt(in_ch=in_ch, out_ch=out_ch)
         self.args = args
-        self.gt_paths = list_images(Path(args.data_dir) / 'val/images')
+        self.gt_paths = list_images(Path(args.data_dir) / 'val/masks')
 
     def training_step(self, batch, batch_idx):
         images, labels = batch['image'], batch['label']
@@ -665,8 +665,13 @@ class ISNet(pt.LightningModule):
         self.log('val_loss', loss)
         self.log('val_loss2', loss2)
 
-        num_vals = images.shape[0]
-        for t in range(num_vals):
+        samples_per_batch = images.shape[0]
+        batch_indices = []
+        batch_pre = []
+        batch_rec = []
+        batch_f1 = []
+        batch_mae = []
+        for t in range(samples_per_batch):
             i_test = imidxs[t].item()
 
             pred_val = ds[0][t, :, :, :]  # B x 1 x H x W
@@ -684,40 +689,54 @@ class ISNet(pt.LightningModule):
                 outdir = Path(self.args.outdir)
                 if not outdir.exists():
                     outdir.mkdir(parents=True, exist_ok=True)
-                gt_filename = Path(self.gt_paths[i_test]).name
-                gt_outpath = outdir / gt_filename
-                gt_out = (pred_val * 255).cpu().data.numpy().astype(np.uint8)
-                io.imsave(gt_outpath, gt_out)
+                pred_filename = Path(self.gt_paths[i_test]).name
+                pred_outpath = outdir / pred_filename
+                pred_out = (pred_val * 255).cpu().data.numpy().astype(np.uint8)
+                io.imsave(pred_outpath, pred_out)
 
             gt = np.squeeze(io.imread(self.gt_paths[i_test]))  # max = 255
             with torch.no_grad():
                 gt = torch.tensor(gt).type_as(images)
 
             pre, rec, f1, mae = f1_mae_torch(pred_val*255, gt)
-        return pre, rec, f1, mae
+            batch_indices.append(i_test)
+            batch_pre.append(pre)
+            batch_rec.append(rec)
+            batch_f1.append(f1)
+            batch_mae.append(mae)
 
-    def validation_epoch_end(self, batch_metrics):
-        num_vals = len(batch_metrics)
-        precisions = torch.zeros(num_vals, 255)
-        recalls = torch.zeros(num_vals, 255)
-        f1_scores = torch.zeros(num_vals, 255)
-        mae_all = torch.zeros(num_vals)
-        for i, metrics in enumerate(batch_metrics):
-            precisions[i] = metrics[0]
-            recalls[i] = metrics[1]
-            f1_scores[i] = metrics[2]
-            mae_all[i] = metrics[3]
+        batch_indices = torch.tensor(batch_indices)
+        batch_pre = torch.cat(batch_pre, 0)
+        batch_rec = torch.cat(batch_rec, 0)
+        batch_f1 = torch.cat(batch_f1, 0)
+        batch_mae = torch.tensor(batch_mae)
 
-        mean_precision = precisions.mean(0)
-        mean_recall = recalls.mean(0)
-        mean_f1_score = (1 + 0.3) * mean_precision * \
+        return batch_indices, batch_pre, batch_rec, batch_f1, batch_mae
+
+    def validation_epoch_end(self, epoch_metrics):
+        num_batches = len(epoch_metrics)
+        val_size = sum([len(b[0]) for b in epoch_metrics])
+        epoch_pre = torch.zeros(val_size, 255)
+        epoch_rec = torch.zeros(val_size, 255)
+        epoch_f1 = torch.zeros(val_size, 255)
+        epoch_mae = torch.zeros(val_size)
+        for i, metrics in enumerate(epoch_metrics):
+            for j, img_idx in enumerate(metrics[0]):
+                epoch_pre[img_idx, :] = metrics[1][j, :]
+                epoch_rec[img_idx, :] = metrics[2][j, :]
+                epoch_f1[img_idx, :] = metrics[3][j, :]
+                epoch_mae[img_idx] = metrics[4][j]
+
+        mean_precision = epoch_pre.mean(0)
+        mean_recall = epoch_rec.mean(0)
+        f1_scores = (1 + 0.3) * mean_precision * \
             mean_recall / (0.3*mean_precision + mean_recall+1e-8)
 
-        mean_mae = mae_all.mean().item()
-        max_f1_score = mean_f1_score.max().item()
-        self.log('val_mae', mean_mae)
-        self.log('val_f1_score', max_f1_score)
+        final_mae = epoch_mae.mean().item()
+        final_f1_score = f1_scores.max().item()
+        self.log('val_mae', final_mae)
+        self.log('val_f1_score', final_f1_score)
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.args.lr)
         return optimizer
