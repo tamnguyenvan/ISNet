@@ -2,7 +2,7 @@ from pathlib import Path
 import argparse
 import warnings
 
-from model.isnet import ISNet
+from model.isnet import Trainer
 from utils.data import GOSDataModule
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
@@ -17,13 +17,14 @@ def train():
 
     # Model
     print('Creating model...')
-    model = ISNet(3, 1, args)
+    model = Trainer(3, 1, args)
 
     # Training
     print('Started training')
     trainer = pl.Trainer(
         devices='auto',
         accelerator='auto',
+        num_sanity_val_steps=0,
         max_epochs=args.epochs,
         default_root_dir=args.root_dir,
         callbacks=[

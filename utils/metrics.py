@@ -1,4 +1,5 @@
 import torch
+from torchmetrics import Metric
 
 
 def mae_torch(pred, gt):
@@ -43,3 +44,41 @@ def f1_mae_torch(pred, gt):
     mae = mae_torch(pred, gt)
 
     return pre, rec, f1, mae
+
+
+class Precision(Metric):
+    def __init__(self):
+        super().__init__()
+        self.add_state('precision', default=torch.zeros(
+            1, 255), dist_reduce_fx='cat')
+
+    def update(self, batch_precision: torch.Tensor):
+        self.precision = batch_precision
+
+    def compute(self):
+        return self.precision.mean(dim=0)
+
+
+class Recall(Metric):
+    def __init__(self):
+        super().__init__()
+        self.add_state('recall', default=torch.zeros(
+            1, 255), dist_reduce_fx='cat')
+
+    def update(self, batch_recall: torch.Tensor):
+        self.recall = batch_recall
+
+    def compute(self):
+        return self.recall.mean(dim=0)
+
+
+class MAE(Metric):
+    def __init__(self):
+        super().__init__()
+        self.add_state('mae', default=torch.zeros(1), dist_reduce_fx='cat')
+
+    def update(self, batch_mae: torch.Tensor):
+        self.mae = batch_mae
+
+    def compute(self):
+        return self.mae.mean()

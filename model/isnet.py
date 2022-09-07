@@ -9,7 +9,7 @@ from skimage import io
 import numpy as np
 
 from utils.data import list_images
-from utils.metrics import f1_mae_torch
+from utils.metrics import f1_mae_torch, Precision, Recall, MAE
 
 
 bce_loss = nn.BCELoss(size_average=True)
@@ -514,10 +514,10 @@ class ISNetGTEncoder(nn.Module):
         return [F.sigmoid(d1), F.sigmoid(d2), F.sigmoid(d3), F.sigmoid(d4), F.sigmoid(d5), F.sigmoid(d6)], [hx1, hx2, hx3, hx4, hx5, hx6]
 
 
-class ISNetPt(nn.Module):
+class ISNet(nn.Module):
 
     def __init__(self, in_ch=3, out_ch=1):
-        super(ISNetPt, self).__init__()
+        super(ISNet, self).__init__()
 
         self.conv_in = nn.Conv2d(in_ch, 64, 3, stride=2, padding=1)
         self.pool_in = nn.MaxPool2d(2, stride=2, ceil_mode=True)
@@ -641,12 +641,17 @@ class ISNetPt(nn.Module):
         )
 
 
-class ISNet(pt.LightningModule):
+class Trainer(pt.LightningModule):
     def __init__(self, in_ch, out_ch, args):
         super().__init__()
-        self.net = ISNetPt(in_ch=in_ch, out_ch=out_ch)
+        self.net = ISNet(in_ch=in_ch, out_ch=out_ch)
         self.args = args
         self.gt_paths = list_images(Path(args.data_dir) / 'val/masks')
+
+        # Metrics
+        self.pre = Precision()
+        self.rec = Recall()
+        self.mae = MAE()
 
     def training_step(self, batch, batch_idx):
         images, labels = batch['image'], batch['label']
@@ -666,11 +671,6 @@ class ISNet(pt.LightningModule):
         self.log('val_loss2', loss2)
 
         samples_per_batch = images.shape[0]
-        batch_indices = []
-        batch_pre = []
-        batch_rec = []
-        batch_f1 = []
-        batch_mae = []
         for t in range(samples_per_batch):
             i_test = imidxs[t].item()
 
@@ -680,7 +680,6 @@ class ISNet(pt.LightningModule):
             pred_val = torch.squeeze(F.upsample(torch.unsqueeze(
                 pred_val, 0), (shapes[t][0], shapes[t][1]), mode='bilinear'))
 
-            # pred_val = normPRED(pred_val)
             ma = torch.max(pred_val)
             mi = torch.min(pred_val)
             pred_val = (pred_val-mi)/(ma-mi)  # max = 1
@@ -699,43 +698,23 @@ class ISNet(pt.LightningModule):
                 gt = torch.tensor(gt).type_as(images)
 
             pre, rec, f1, mae = f1_mae_torch(pred_val*255, gt)
-            batch_indices.append(i_test)
-            batch_pre.append(pre)
-            batch_rec.append(rec)
-            batch_f1.append(f1)
-            batch_mae.append(mae)
+            self.pre.update(pre)
+            self.rec.update(rec)
+            self.mae.update(mae)
 
-        batch_indices = torch.tensor(batch_indices)
-        batch_pre = torch.cat(batch_pre, 0)
-        batch_rec = torch.cat(batch_rec, 0)
-        batch_f1 = torch.cat(batch_f1, 0)
-        batch_mae = torch.tensor(batch_mae)
+    def validation_epoch_end(self, val_outputs):
+        pre = self.pre.compute().mean(dim=0)
+        rec = self.rec.compute().mean(dim=0)
+        mae = self.mae.compute().mean()
+        f1_score = (1 + 0.3) * pre * rec / (0.3*pre + rec+1e-8)
+        f1_score = f1_score.max()
 
-        return batch_indices, batch_pre, batch_rec, batch_f1, batch_mae
+        self.log('val_mae', mae)
+        self.log('val_f1_score', f1_score)
 
-    def validation_epoch_end(self, epoch_metrics):
-        num_batches = len(epoch_metrics)
-        val_size = sum([len(b[0]) for b in epoch_metrics])
-        epoch_pre = torch.zeros(val_size, 255)
-        epoch_rec = torch.zeros(val_size, 255)
-        epoch_f1 = torch.zeros(val_size, 255)
-        epoch_mae = torch.zeros(val_size)
-        for i, metrics in enumerate(epoch_metrics):
-            for j, img_idx in enumerate(metrics[0]):
-                epoch_pre[img_idx, :] = metrics[1][j, :]
-                epoch_rec[img_idx, :] = metrics[2][j, :]
-                epoch_f1[img_idx, :] = metrics[3][j, :]
-                epoch_mae[img_idx] = metrics[4][j]
-
-        mean_precision = epoch_pre.mean(0)
-        mean_recall = epoch_rec.mean(0)
-        f1_scores = (1 + 0.3) * mean_precision * \
-            mean_recall / (0.3*mean_precision + mean_recall+1e-8)
-
-        final_mae = epoch_mae.mean().item()
-        final_f1_score = f1_scores.max().item()
-        self.log('val_mae', final_mae)
-        self.log('val_f1_score', final_f1_score)
+        self.pre.reset()
+        self.rec.reset()
+        self.mae.reset()
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.args.lr)
