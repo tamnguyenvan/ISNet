@@ -24,6 +24,7 @@ def train():
     trainer = pl.Trainer(
         devices='auto',
         accelerator='auto',
+        gradient_clip_val=0.5,
         num_sanity_val_steps=0,
         max_epochs=args.epochs,
         default_root_dir=args.root_dir,
