@@ -717,11 +717,10 @@ class Trainer(pt.LightningModule):
         self.mae.reset()
 
     def configure_optimizers(self):
-        optimizer = torch.optim.SGD(
-            self.parameters(), lr=self.args.lr, weight_decay=5e-4, nesterov=True)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.args.lr)
         lr_schedulers = {
             'scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer, mode='max', patience=5, verbose=True, min_lr=1e-8),
             'monitor': 'val_f1_score'
         }
-        return optimizer, lr_schedulers
+        return {'optimizer': optimizer, 'lr_scheduler': lr_schedulers}
