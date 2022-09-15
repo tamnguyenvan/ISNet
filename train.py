@@ -43,6 +43,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     # Training
+    parser.add_argument('--model_type', type=str, default='base',
+                        choices=['base', 'small'],
+                        help='Model type.')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
     parser.add_argument('--batch_size', type=int, default=4,
                         help='Batch size. If training on n GPUs, it should be set'
